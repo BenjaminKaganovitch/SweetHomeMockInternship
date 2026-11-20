@@ -82,6 +82,7 @@ import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
+import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
 import java.security.AccessControlException;
 import java.text.Format;
@@ -2009,11 +2010,42 @@ public class PlanComponent extends JComponent implements PlanView, Scrollable, P
    * If home contains levels, the plan of each viewable level is printed in home level order,
    * then the selected level and the selected items are restored.
    */
-  public int print(Graphics g, PageFormat pageFormat, int pageIndex) {
-    List<Level> levels = this.home.getLevels();
-    if (levels.isEmpty()) {
+  public int print(final Graphics g, final PageFormat pageFormat, final int pageIndex) {
+    if (this.home.getLevels().isEmpty()) {
       return printSelectedLevel(g, pageFormat, pageIndex);
+    } else if (EventQueue.isDispatchThread()) {
+      return printLevels(g, pageFormat, pageIndex);
+    } else {
+      // Change selected level and print synchronously in Event Dispatch Thread
+      // to avoid conflicts with the plan and the other views displayed on screen
+      final int [] pageExists = new int [1];
+      try {
+        EventQueue.invokeAndWait(new Runnable() {
+            public void run() {
+              pageExists [0] = printLevels(g, pageFormat, pageIndex);
+            }
+          });
+        return pageExists [0];
+      } catch (InterruptedException ex) {
+        // Stop printing if it was cancelled
+        Thread.currentThread().interrupt();
+        return NO_SUCH_PAGE;
+      } catch (InvocationTargetException ex) {
+        if (ex.getCause() instanceof RuntimeException) {
+          throw (RuntimeException)ex.getCause();
+        } else {
+          throw (Error)ex.getCause();
+        }
+      }
     }
+  }
+
+  /**
+   * Prints the plan of the viewable level matching <code>pageIndex</code>
+   * in home level order, then restores the selected level and the selected items.
+   */
+  private int printLevels(Graphics g, PageFormat pageFormat, int pageIndex) {
+    List<Level> levels = this.home.getLevels();
     // Printed items don't depend on the selected level, so each level requires the same page count
     int levelPageCount = getPrintPageCount(g, pageFormat);
     int levelPageIndex = pageIndex;
